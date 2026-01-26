@@ -1,9 +1,9 @@
 """
-3decision API Client v1.1
+3decision API Client v1.2
 
 Handles all communication with the 3decision API endpoints.
 
-Version: 1.1
+Version: 1.2
 """
 
 import json
@@ -120,7 +120,7 @@ class ThreeDecisionAPIClient:
         self.session.headers.update({
             'Dng-Api-Key': self.api_key,
             'X-API-Version': '1',
-            'User-Agent': 'PyMOL-3decision-Plugin/1.1'
+            'User-Agent': 'PyMOL-3decision-Plugin/1.2'
         })
         
         # Remove Authorization header if present
@@ -148,7 +148,7 @@ class ThreeDecisionAPIClient:
             headers = {
                 'Dng-Api-Key': self.api_key,
                 'X-API-Version': '1',
-                'User-Agent': 'PyMOL-3decision-Plugin/1.1'
+                'User-Agent': 'PyMOL-3decision-Plugin/1.2'
             }
             
             log_debug(f"Request headers: {headers}")
@@ -553,7 +553,7 @@ class ThreeDecisionAPIClient:
                                             log_debug(f"Filename without extension: {filename_without_ext}")
                                             
                                             # Download the actual PDB file
-                                            download_url = f"{self.base_url}/frontend/exports/structure/{domain_event_id}?filename={filename_without_ext}&download=true"
+                                            download_url = f"{self.base_url}/exports/structure/{domain_event_id}?filename={filename_without_ext}&download=true"
                                             
                                             log_debug(f"Downloading PDB file from: {download_url}")
                                             
@@ -884,7 +884,7 @@ class ThreeDecisionAPIClient:
                                         log_debug(f"Filename without extension: {filename_without_ext}")
                                         
                                         # Download the actual PDB file
-                                        download_url = f"{self.base_url}/frontend/exports/structure/{domain_event_id}?filename={filename_without_ext}&download=true"
+                                        download_url = f"{self.base_url}/exports/structure/{domain_event_id}?filename={filename_without_ext}&download=true"
                                         log_debug(f"Downloading PDB file from: {download_url}")
                                         
                                         download_response = self.session.get(download_url)
@@ -932,7 +932,7 @@ class ThreeDecisionAPIClient:
     
     def download_structures_zip(self, structure_ids: List[int], matrices: List[Dict] = None) -> Optional[bytes]:
         """
-        Download structures as a ZIP file from the frontend/exports/structure endpoint
+        Download structures as a ZIP file from the /exports/structure endpoint
         
         Args:
             structure_ids: List of structure IDs to download
@@ -946,7 +946,7 @@ class ThreeDecisionAPIClient:
             
         try:
             # Step 1: Submit export request to get domain event ID
-            url = f"{self.base_url}/frontend/exports/structure"
+            url = f"{self.base_url}/exports/structure"
             headers = {
                 "Authorization": f"Bearer {self.token}",
                 "Content-Type": "application/json"
@@ -1049,7 +1049,7 @@ class ThreeDecisionAPIClient:
                                             log_debug(f"Filename without extension: {filename_without_ext}")
                                             
                                             # Step 3: Download the actual ZIP file
-                                            download_url = f"{self.base_url}/frontend/exports/structure/{domain_event_id}?filename={filename_without_ext}&download=true"
+                                            download_url = f"{self.base_url}/exports/structure/{domain_event_id}?filename={filename_without_ext}&download=true"
                                             
                                             log_debug(f"Downloading ZIP file from: {download_url}")
                                             

@@ -1,9 +1,9 @@
 """
-3decision Plugin GUI v1.1
+3decision Plugin GUI v1.2
 
 Main dialog and interface components for the 3decision PyMOL plugin.
 
-Version: 1.1
+Version: 1.2
 """
 
 import sys
@@ -213,6 +213,55 @@ class SearchThread(QThread):
             self.error_occurred.emit(f"Search error: {str(e)}")
 
 
+def get_object_name(external_code: str, label: str = None, source: str = None) -> str:
+    """
+    Determine the best object name for a structure in PyMOL.
+    
+    Naming logic:
+    - For public domain structures (RCSB PDB, PDB, AlphaFold, etc.): use external_code (e.g., '1abo')
+    - For private/internal structures with a label: use the label
+    - Fallback: use external_code
+    
+    The name is sanitized to be valid for PyMOL (no spaces, special chars replaced).
+    """
+    # Define public/known sources where external_code is meaningful
+    public_sources = [
+        'rcsb', 'pdb', 'alphafold', 'uniprot', 'chembl', 'drugbank',
+        'pubchem', 'zinc', 'emdb', 'wwpdb'
+    ]
+    
+    # Check if it's a public domain structure
+    is_public = False
+    if source:
+        source_lower = source.lower()
+        is_public = any(ps in source_lower for ps in public_sources)
+    
+    # Determine the name to use
+    if is_public:
+        # Use external_code for public structures (it's the PDB code, etc.)
+        name = external_code
+    elif label and label.strip() and label.lower() not in ['n/a', 'null', 'none', '']:
+        # Use label for private structures if available
+        name = label.strip()
+    else:
+        # Fallback to external_code
+        name = external_code
+    
+    # Strip '3dec_' prefix if present (from API file naming)
+    if name.lower().startswith('3dec_'):
+        name = name[5:]
+    
+    # Sanitize name for PyMOL (replace invalid characters)
+    # PyMOL object names should be alphanumeric with underscores
+    sanitized = ''.join(c if c.isalnum() or c == '_' else '_' for c in name)
+    
+    # Ensure we have a valid name
+    if not sanitized:
+        sanitized = external_code if external_code else 'structure'
+    
+    return sanitized
+
+
 class LoadStructureThread(QThread):
     """Thread for loading structures into PyMOL"""
     structure_loaded = pyqtSignal(str, str)  # structure_id, object_name
@@ -223,7 +272,7 @@ class LoadStructureThread(QThread):
     def __init__(self, api_client: ThreeDecisionAPIClient, structure_data: List[Dict[str, str]]):
         super().__init__()
         self.api_client = api_client
-        self.structure_data = structure_data  # List of {structure_id, external_code}
+        self.structure_data = structure_data  # List of {structure_id, external_code, label?, source?, matrix?}
         
     def run(self):
         try:
@@ -306,7 +355,9 @@ class LoadStructureThread(QThread):
                     for structure_info in self.structure_data:
                         structure_id = structure_info['structure_id']
                         external_code = structure_info['external_code']
-                        object_name = external_code
+                        label = structure_info.get('label')
+                        source = structure_info.get('source')
+                        object_name = get_object_name(external_code, label, source)
                         
                         # Try to extract and rename each model
                         # PyMOL loads multi-model PDB files with state numbers
@@ -320,7 +371,8 @@ class LoadStructureThread(QThread):
                             # Attach 3decision metadata
                             cmd.set_property("3decision_structure_id", structure_id, object_name)
                             cmd.set_property("3decision_external_code", external_code, object_name)
-                            cmd.set_property("3decision_source", "3decision_plugin_v1.1", object_name)
+                            cmd.set_property("3decision_label", label or '', object_name)
+                            cmd.set_property("3decision_source", source or 'unknown', object_name)
                             
                             log_info(f"3decision Plugin: Loaded {object_name} with structure_id: {structure_id} (with transformation)")
                             self.structure_loaded.emit(structure_id, object_name)
@@ -341,6 +393,8 @@ class LoadStructureThread(QThread):
                 for structure_info in self.structure_data:
                     structure_id = structure_info['structure_id']
                     external_code = structure_info['external_code']
+                    label = structure_info.get('label')
+                    source = structure_info.get('source')
                     
                     self.status_update.emit(f"Loading structure {external_code} ({structure_id})...")
                     
@@ -348,14 +402,15 @@ class LoadStructureThread(QThread):
                     pdb_content = self.api_client.export_structure_pdb(structure_id)
                     
                     if pdb_content:
-                        # Load into PyMOL using external_code as object name
-                        object_name = external_code
+                        # Load into PyMOL using smart object naming
+                        object_name = get_object_name(external_code, label, source)
                         cmd.read_pdbstr(pdb_content, object_name)
                         
                         # Attach 3decision metadata as object properties
                         cmd.set_property("3decision_structure_id", structure_id, object_name)
                         cmd.set_property("3decision_external_code", external_code, object_name)
-                        cmd.set_property("3decision_source", "3decision_plugin_v1.1", object_name)
+                        cmd.set_property("3decision_label", label or '', object_name)
+                        cmd.set_property("3decision_source", source or 'unknown', object_name)
                         
                         log_info(f"3decision Plugin: Loaded {object_name} with structure_id: {structure_id}")
                         self.structure_loaded.emit(structure_id, object_name)
@@ -903,10 +958,16 @@ class ThreeDecisionDialog(QDialog):
                               structure.get('matrix') or 
                               structure.get('MATRIX'))
             
-            # Store both structure_id and matrix as a dict in UserRole
+            # Get source for naming logic
+            source = (structure.get('SOURCE') or
+                     structure.get('source') or
+                     structure.get('general', {}).get('source'))
+            
+            # Store structure_id, matrix, and source as a dict in UserRole
             item.setData(Qt.UserRole, {
                 'structure_id': structure_id,
-                'matrix': transform_matrix
+                'matrix': transform_matrix,
+                'source': source
             })
             self.project_structures_table.setItem(row, 0, item)
             
@@ -955,21 +1016,29 @@ class ThreeDecisionDialog(QDialog):
                 data = item.data(Qt.UserRole)
                 external_code = item.text()
                 
-                # Data is now a dict with structure_id and matrix
+                # Get label from table column 1
+                label_item = self.project_structures_table.item(row, 1)
+                label = label_item.text() if label_item else None
+                
+                # Data is now a dict with structure_id, matrix, and source
                 if isinstance(data, dict):
                     structure_id = data.get('structure_id')
                     matrix = data.get('matrix')
-                    log_debug(f"Row {row}: structure_id={structure_id}, external_code={external_code}, has_matrix={matrix is not None}")
+                    source = data.get('source')
+                    log_debug(f"Row {row}: structure_id={structure_id}, external_code={external_code}, label={label}, has_matrix={matrix is not None}")
                 else:
                     # Fallback for old format (just structure_id)
                     structure_id = data
                     matrix = None
+                    source = None
                     log_debug(f"Row {row}: structure_id={structure_id}, external_code={external_code} (no matrix)")
                 
                 if structure_id:
                     selected_structures.append({
                         'structure_id': str(structure_id),
                         'external_code': external_code,
+                        'label': label,
+                        'source': source,
                         'matrix': matrix  # Include transformation matrix
                     })
                 else:
@@ -1632,12 +1701,21 @@ class ThreeDecisionDialog(QDialog):
             if item:
                 structure_id = item.data(Qt.UserRole)
                 external_code = item.text()
-                log_debug(f"Row {row}: structure_id={structure_id}, external_code={external_code}")
+                
+                # Get label and source from table columns
+                label_item = self.results_table.item(row, 1)
+                source_item = self.results_table.item(row, 5)
+                label = label_item.text() if label_item else None
+                source = source_item.text() if source_item else None
+                
+                log_debug(f"Row {row}: structure_id={structure_id}, external_code={external_code}, label={label}, source={source}")
                 
                 if structure_id:
                     selected_structures.append({
                         'structure_id': str(structure_id),
-                        'external_code': external_code
+                        'external_code': external_code,
+                        'label': label,
+                        'source': source
                     })
                 else:
                     log_error(f"Row {row}: structure_id is None!")
