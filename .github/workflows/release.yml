@@ -1,0 +1,35 @@
+name: Build and Release Plugin
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create plugin ZIP
+        run: |
+          # Create a clean directory for the plugin
+          mkdir -p dist/3decision_plugin_pymol
+          
+          # Copy plugin files (excluding git and cache files)
+          cp -r __init__.py api_client.py gui.py logger.py settings.py images dist/3decision_plugin_pymol/
+          
+          # Create the ZIP file
+          cd dist
+          zip -r 3decision_plugin_pymol.zip 3decision_plugin_pymol
+          
+          echo "Created ZIP file:"
+          ls -la 3decision_plugin_pymol.zip
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/3decision_plugin_pymol.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
