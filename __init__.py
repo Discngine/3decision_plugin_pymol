@@ -1,9 +1,9 @@
 """
-3decision PyMOL Plugin v1.1
+3decision PyMOL Plugin v1.2
 
 A plugin to search and load structures from 3decision database into PyMOL.
 
-Version: 1.1
+Version: 1.2
 """
 
 import pymol
@@ -34,7 +34,7 @@ def log_error(message):
         print(f"ERROR: {message}")
 
 # Plugin version
-__version__ = "1.1"
+__version__ = "1.2"
 
 # Global reference to avoid garbage collection of our dialog
 dialog = None
@@ -102,16 +102,19 @@ def get_3decision_info(object_name):
         from pymol import cmd
         structure_id = cmd.get_property("3decision_structure_id", object_name)
         external_code = cmd.get_property("3decision_external_code", object_name)
+        label = cmd.get_property("3decision_label", object_name)
         source = cmd.get_property("3decision_source", object_name)
         
         if structure_id:
             print(f"3decision info for '{object_name}':")
             print(f"  Structure ID: {structure_id}")
             print(f"  External Code: {external_code}")
+            print(f"  Label: {label or 'N/A'}")
             print(f"  Source: {source}")
             return {
                 "structure_id": structure_id,
                 "external_code": external_code,
+                "label": label,
                 "source": source
             }
         else:

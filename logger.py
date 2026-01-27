@@ -3,7 +3,7 @@ Logging utility for 3decision Plugin
 
 Provides configurable logging that can be enabled/disabled via settings.
 
-Version: 1.1
+Version: 1.2
 """
 
 import logging

@@ -1,9 +1,9 @@
 """
-Settings Dialog v1.1
+Settings Dialog v1.2
 
 Configuration dialog for 3decision API settings.
 
-Version: 1.1
+Version: 1.2
 """
 
 import os
@@ -90,7 +90,7 @@ class SettingsDialog(QDialog):
         
     def init_ui(self):
         """Initialize the user interface"""
-        self.setWindowTitle("3decision API Settings v1.1")
+        self.setWindowTitle("3decision API Settings v1.2")
         self.setModal(True)
         self.setMinimumSize(600, 300)
         
