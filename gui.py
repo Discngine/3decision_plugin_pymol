@@ -458,6 +458,8 @@ class ThreeDecisionDialog(QDialog):
         self.settings_button.setFixedSize(30, 30)
         self.settings_button.clicked.connect(self.open_settings)
         self.settings_button.setToolTip("Settings")
+        # Prevent this button from being triggered by Enter key (fixes Windows issue)
+        self.settings_button.setAutoDefault(False)
         
         # Try to load the cog icon
         cog_icon = self.load_cog_icon()
@@ -507,6 +509,8 @@ class ThreeDecisionDialog(QDialog):
         self.submit_button = QPushButton("Submit")
         self.submit_button.clicked.connect(self.submit_search)
         self.submit_button.setEnabled(False)
+        # Prevent this button from being triggered by Enter key when disabled (search_input handles Enter)
+        self.submit_button.setAutoDefault(False)
         search_layout.addWidget(self.submit_button)
         
         layout.addLayout(search_layout)
@@ -557,6 +561,7 @@ class ThreeDecisionDialog(QDialog):
         
         # Clear filters button
         clear_filters_btn = QPushButton("Clear Filters")
+        clear_filters_btn.setAutoDefault(False)
         clear_filters_btn.clicked.connect(self.clear_filters)
         filters_layout.addWidget(clear_filters_btn)
         
@@ -584,6 +589,7 @@ class ThreeDecisionDialog(QDialog):
         button_layout.addStretch()
         
         self.load_button = QPushButton("Load Selected in PyMOL")
+        self.load_button.setAutoDefault(False)
         self.load_button.clicked.connect(self.load_selected_structures)
         self.load_button.setEnabled(False)
         button_layout.addWidget(self.load_button)
@@ -629,6 +635,7 @@ class ThreeDecisionDialog(QDialog):
         
         # Clear projects filters button
         clear_projects_filters_btn = QPushButton("Clear Filters")
+        clear_projects_filters_btn.setAutoDefault(False)
         clear_projects_filters_btn.clicked.connect(self.clear_projects_filters)
         projects_filters_layout.addWidget(clear_projects_filters_btn)
         
@@ -659,6 +666,7 @@ class ThreeDecisionDialog(QDialog):
         # Projects buttons
         projects_buttons = QHBoxLayout()
         refresh_button = QPushButton("Refresh Projects")
+        refresh_button.setAutoDefault(False)
         refresh_button.clicked.connect(self.load_projects_for_tab)
         projects_buttons.addWidget(refresh_button)
         projects_buttons.addStretch()
@@ -692,6 +700,7 @@ class ThreeDecisionDialog(QDialog):
         
         # Clear filters button
         clear_project_filters_btn = QPushButton("Clear Filters")
+        clear_project_filters_btn.setAutoDefault(False)
         clear_project_filters_btn.clicked.connect(self.clear_project_filters)
         project_filters_layout.addWidget(clear_project_filters_btn)
         
@@ -714,16 +723,19 @@ class ThreeDecisionDialog(QDialog):
         # Structure selection buttons
         structure_buttons = QHBoxLayout()
         select_all_btn = QPushButton("Select All")
+        select_all_btn.setAutoDefault(False)
         select_all_btn.clicked.connect(self.select_all_project_structures)
         structure_buttons.addWidget(select_all_btn)
         
         select_none_btn = QPushButton("Select None")
+        select_none_btn.setAutoDefault(False)
         select_none_btn.clicked.connect(self.select_none_project_structures)
         structure_buttons.addWidget(select_none_btn)
         
         structure_buttons.addStretch()
         
         self.load_project_structures_button = QPushButton("Load Selected Structures")
+        self.load_project_structures_button.setAutoDefault(False)
         self.load_project_structures_button.clicked.connect(self.load_selected_project_structures)
         self.load_project_structures_button.setEnabled(False)
         structure_buttons.addWidget(self.load_project_structures_button)
