@@ -29,8 +29,8 @@ After installation, access the plugin via:
 To create a distributable ZIP file for the plugin:
 
 ```bash
-cd 3decision_plugin_pymol
-zip -r tmp/3decision_plugin_pymol_test.zip . -x "*.pyc" -x "__pycache__/*" -x "*.git*" -x "tmp/*"
+cd plugin_3decision
+zip -r 3decision_plugin_pymol/tmp/3decision_plugin_pymol_test.zip 3decision_plugin_pymol -x "*.pyc" -x "*__pycache__*" -x "*.git*" -x "*/tmp/*"
 ```
 
 This excludes compiled Python files, cache directories, git files, and temporary files.
