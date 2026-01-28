@@ -436,8 +436,14 @@ class ThreeDecisionDialog(QDialog):
         self.projects_data = []  # Initialize empty projects list
         self.current_project_structures = []  # Current project structures
         self.projects_loaded = False  # Track if projects have been loaded
+        # Associated files state
+        self.current_structure = None
+        self.current_structure_id = None
+        self.current_external_code = None
+        self.current_transform_matrix = None
         self.init_ui()
         self.check_login_status()
+
         
     def init_ui(self):
         """Initialize the user interface"""
@@ -482,6 +488,10 @@ class ThreeDecisionDialog(QDialog):
         # Projects tab
         self.projects_widget = self._create_projects_tab()
         self.tab_widget.addTab(self.projects_widget, "Projects")
+        
+        # Associated Files tab
+        self.files_widget = self._create_files_tab()
+        self.tab_widget.addTab(self.files_widget, "Associated Files")
         
         main_layout.addWidget(self.tab_widget)
         
@@ -707,14 +717,17 @@ class ThreeDecisionDialog(QDialog):
         layout.addLayout(project_filters_layout)
         
         self.project_structures_table = QTableWidget()
-        self.project_structures_table.setColumnCount(4)
+        self.project_structures_table.setColumnCount(5)
         self.project_structures_table.setHorizontalHeaderLabels([
-            "External Code", "Label", "Title", "Method"
+            "External Code", "Label", "Title", "Method", "Files"
         ])
         self.project_structures_table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.project_structures_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.project_structures_table.setEditTriggers(QAbstractItemView.NoEditTriggers)  # Disable editing
-        self.project_structures_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        header = self.project_structures_table.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.Stretch)
+        header.setSectionResizeMode(4, QHeaderView.Fixed)  # Files column fixed width
+        self.project_structures_table.setColumnWidth(4, 80)  # Files button column
         self.project_structures_table.setAlternatingRowColors(True)
         self.project_structures_table.setSortingEnabled(True)
         
@@ -745,6 +758,82 @@ class ThreeDecisionDialog(QDialog):
         widget.setLayout(layout)
         return widget
     
+    def _create_files_tab(self):
+        """Create the associated files tab"""
+        widget = QWidget()
+        layout = QVBoxLayout()
+        
+        # Header with current structure info
+        self.files_header_label = QLabel("Associated Files - Select a structure from the Projects tab to view its files")
+        self.files_header_label.setStyleSheet("font-weight: bold; padding: 5px;")
+        layout.addWidget(self.files_header_label)
+        
+        # Checkbox to apply transformation matrix
+        transform_layout = QHBoxLayout()
+        self.apply_transform_checkbox = QCheckBox("Apply transformation matrix to associated files (if available)")
+        self.apply_transform_checkbox.setToolTip("When enabled, associated files (maps, etc.) will be transformed using the structure's reference transformation matrix")
+        self.apply_transform_checkbox.setChecked(True)  # Default to enabled
+        transform_layout.addWidget(self.apply_transform_checkbox)
+        transform_layout.addStretch()
+        layout.addLayout(transform_layout)
+        
+        # Files table
+        self.files_table = QTableWidget()
+        self.files_table.setColumnCount(5)
+        self.files_table.setHorizontalHeaderLabels(["File Name", "Type", "Size", "Format", "Description"])
+        self.files_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.files_table.setAlternatingRowColors(True)
+        self.files_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.files_table.setSortingEnabled(True)
+        
+        # Configure header for resizable columns
+        header = self.files_table.horizontalHeader()
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+        # Set reasonable default column widths
+        self.files_table.setColumnWidth(0, 200)  # File Name
+        self.files_table.setColumnWidth(1, 100)  # Type
+        self.files_table.setColumnWidth(2, 80)   # Size
+        self.files_table.setColumnWidth(3, 100)  # Format
+        # Description column stretches
+        
+        self.files_table.itemSelectionChanged.connect(self._on_file_selection_changed)
+        layout.addWidget(self.files_table)
+        
+        # Buttons for file operations
+        files_buttons = QHBoxLayout()
+        
+        self.refresh_files_button = QPushButton("Refresh Files")
+        self.refresh_files_button.setAutoDefault(False)
+        self.refresh_files_button.clicked.connect(self.refresh_associated_files)
+        self.refresh_files_button.setEnabled(False)
+        files_buttons.addWidget(self.refresh_files_button)
+        
+        files_buttons.addStretch()
+        
+        self.open_file_button = QPushButton("Open in PyMOL")
+        self.open_file_button.setAutoDefault(False)
+        self.open_file_button.clicked.connect(self.open_selected_file)
+        self.open_file_button.setEnabled(False)
+        files_buttons.addWidget(self.open_file_button)
+        
+        self.open_system_button = QPushButton("Download && Open")
+        self.open_system_button.setToolTip("Download the file and open it with the system's default application (useful for PDFs, images, etc.)")
+        self.open_system_button.setAutoDefault(False)
+        self.open_system_button.clicked.connect(self.download_and_open_with_system)
+        self.open_system_button.setEnabled(False)
+        files_buttons.addWidget(self.open_system_button)
+        
+        layout.addLayout(files_buttons)
+        
+        # Status label for file operations
+        self.files_status_label = QLabel("")
+        self.files_status_label.setStyleSheet("color: gray; padding: 5px;")
+        layout.addWidget(self.files_status_label)
+        
+        widget.setLayout(layout)
+        return widget
+
     def load_projects_for_tab(self):
         """Load projects when Projects tab is accessed"""
         try:
@@ -1002,6 +1091,14 @@ class ThreeDecisionDialog(QDialog):
                      structure.get('method') or 
                      structure.get('general', {}).get('method', 'N/A'))
             self.project_structures_table.setItem(row, 3, QTableWidgetItem(method))
+            
+            # Files button
+            files_button = QPushButton("View")
+            files_button.setAutoDefault(False)
+            # Store the structure data for the files button
+            files_button.setProperty('structure_data', structure)
+            files_button.clicked.connect(lambda checked, s=structure: self.view_structure_files(s))
+            self.project_structures_table.setCellWidget(row, 4, files_button)
         
         self.project_structures_table.setSortingEnabled(True)
         self.load_project_structures_button.setEnabled(len(structures) > 0)
@@ -1077,6 +1174,362 @@ class ThreeDecisionDialog(QDialog):
     def update_project_status(self, message: str):
         """Update status message for project loading"""
         self.status_label.setText(message)
+    
+    # =============================================
+    # Associated Files functionality
+    # =============================================
+    
+    def view_structure_files(self, structure):
+        """View associated files for a structure"""
+        if not structure:
+            return
+            
+        structure_id = str(structure.get('STRUCTURE_ID') or structure.get('structure_id') or 
+                         structure.get('general', {}).get('structure_id', ''))
+        external_code = (structure.get('EXTERNAL_CODE') or structure.get('external_code') or 
+                        structure.get('general', {}).get('external_code', structure_id))
+        
+        # Store current structure for file operations
+        self.current_structure = structure
+        self.current_structure_id = structure_id
+        self.current_external_code = external_code
+        
+        # Extract and store transformation matrix if available
+        self.current_transform_matrix = None
+        matrix = structure.get('TRANSFORM_MATRIX')
+        if not matrix:
+            ref_transforms = structure.get('ReferenceTransforms')
+            if ref_transforms and isinstance(ref_transforms, dict):
+                transform = ref_transforms.get('transform')
+                if transform and isinstance(transform, list) and len(transform) == 16:
+                    # Store as 4x4 nested array
+                    matrix = [
+                        transform[0:4],
+                        transform[4:8],
+                        transform[8:12],
+                        transform[12:16]
+                    ]
+        self.current_transform_matrix = matrix
+        
+        # Update header and switch to files tab
+        matrix_status = " (with transformation matrix)" if matrix else ""
+        self.files_header_label.setText(f"Associated Files for {external_code} (ID: {structure_id}){matrix_status}")
+        self.tab_widget.setCurrentIndex(2)  # Switch to Associated Files tab
+        
+        # Enable refresh button
+        self.refresh_files_button.setEnabled(True)
+        
+        # Load files using external_code
+        self.load_associated_files(external_code)
+        
+    def load_associated_files(self, external_code):
+        """Load associated files for a structure using external code"""
+        try:
+            self.files_status_label.setText("Loading associated files...")
+            
+            # Get associated files from API using external_code
+            files = self.api_client.get_associated_files(external_code)
+            
+            if files:
+                self.populate_files_table(files)
+                self.files_status_label.setText(f"Loaded {len(files)} associated files")
+            else:
+                self.files_table.setRowCount(0)
+                self.files_status_label.setText("No associated files found")
+                
+        except Exception as e:
+            log_error(f"Failed to load associated files: {e}")
+            self.files_status_label.setText(f"Error loading files: {str(e)}")
+            self.files_table.setRowCount(0)
+            
+    def populate_files_table(self, files):
+        """Populate the files table with file data"""
+        self.files_table.setRowCount(len(files))
+        
+        for row, file_info in enumerate(files):
+            # Extract file information using correct API response field names
+            filename = file_info.get('file_name', 'Unknown')
+            file_type = file_info.get('file_type_label', 'Unknown')
+            file_size = "N/A"  # Size not provided in API response
+            file_extension = file_info.get('file_type_extension', '')
+            file_format = self._get_file_format_from_extension(file_extension, filename)
+            description = file_info.get('file_desc', '') or ''
+            
+            # Create table items
+            name_item = QTableWidgetItem(filename)
+            name_item.setData(Qt.UserRole, file_info)  # Store full file data for later use
+            self.files_table.setItem(row, 0, name_item)
+            self.files_table.setItem(row, 1, QTableWidgetItem(str(file_type)))
+            self.files_table.setItem(row, 2, QTableWidgetItem(str(file_size)))
+            self.files_table.setItem(row, 3, QTableWidgetItem(file_format))
+            self.files_table.setItem(row, 4, QTableWidgetItem(description))
+            
+    def _get_file_format_from_extension(self, extension, filename=""):
+        """Determine file format from extension and filename"""
+        if not extension:
+            # Fallback to extracting from filename
+            if filename and '.' in filename:
+                extension = filename.lower().split('.')[-1]
+            else:
+                return "Unknown"
+                
+        extension = extension.lower()
+        
+        # PyMOL-supported formats and other common formats
+        format_map = {
+            'pdb': 'PDB Structure',
+            'cif': 'mmCIF Structure',
+            'mmcif': 'mmCIF Structure',
+            'dsn6': 'DSN6 Map',
+            'xplor': 'XPLOR Map',
+            'cns': 'CNS Map',
+            'mtz': 'MTZ Reflection',
+            'mrc': 'MRC Map',
+            'map': 'CCP4 Map',
+            'ccp4': 'CCP4 Map',
+            'dx': 'DX Map',
+            'sdf': 'SDF Molecule',
+            'mol2': 'MOL2 Molecule',
+            'mol': 'MOL Molecule',
+            'xyz': 'XYZ Coordinates',
+            'mae': 'Maestro File',
+            'smi': 'SMILES File',
+            'as': 'RDock Grid',
+            'pdf': 'PDF File',
+            'png': 'PNG Image',
+            'jpg': 'JPG Image',
+            'jpeg': 'JPEG Image',
+            'tif': 'TIF Image',
+            'tiff': 'TIFF Image',
+            'doc': 'DOC File',
+            'docx': 'DOCX File',
+            'xls': 'XLS File',
+            'xlsx': 'XLSX File',
+            'csv': 'CSV File',
+            'txt': 'Text File',
+        }
+        
+        return format_map.get(extension, f"{extension.upper()} File" if extension else "Unknown")
+        
+    def _on_file_selection_changed(self):
+        """Handle file selection change"""
+        selected_items = self.files_table.selectedItems()
+        has_selection = len(selected_items) > 0
+        
+        self.open_file_button.setEnabled(has_selection)
+        self.open_system_button.setEnabled(has_selection)
+        
+    def refresh_associated_files(self):
+        """Refresh the associated files list"""
+        if hasattr(self, 'current_external_code') and self.current_external_code:
+            self.load_associated_files(self.current_external_code)
+
+    def open_selected_file(self):
+        """Open the selected file in PyMOL"""
+        selected_row = self.files_table.currentRow()
+        if selected_row < 0:
+            QMessageBox.warning(self, "Warning", "Please select a file to open")
+            return
+            
+        file_item = self.files_table.item(selected_row, 0)
+        if not file_item:
+            return
+            
+        file_info = file_item.data(Qt.UserRole)
+        filename = file_item.text()
+        file_format = self.files_table.item(selected_row, 3).text()
+        
+        # PyMOL-supported formats
+        # Structure formats
+        structure_formats = ['PDB Structure', 'mmCIF Structure', 'SDF Molecule', 
+                           'MOL2 Molecule', 'MOL Molecule', 'XYZ Coordinates', 'Maestro File']
+        # Map/density formats that PyMOL supports
+        map_formats = ['CCP4 Map', 'MRC Map', 'DSN6 Map', 'XPLOR Map', 'DX Map']
+        
+        supported_formats = structure_formats + map_formats
+        
+        # Formats that PyMOL cannot open but can be opened with system apps
+        system_open_formats = ['RDock Grid', 'AS File', 'PDF File', 'PNG Image', 'JPG Image', 
+                              'JPEG Image', 'TIF Image', 'TIFF Image', 'DOC File', 'DOCX File',
+                              'XLS File', 'XLSX File', 'CSV File', 'Text File', 'MTZ Reflection']
+        
+        if file_format not in supported_formats:
+            # Check if it's a format that can be opened with system app
+            if file_format in system_open_formats or file_format.endswith(' File') or file_format.endswith(' Image'):
+                QMessageBox.information(self, "Use System Application", 
+                                      f"'{file_format}' files cannot be opened directly in PyMOL.\n\n"
+                                      f"Use the 'Download & Open with System' button to open this file "
+                                      f"with your system's default application.")
+            else:
+                QMessageBox.warning(self, "Unsupported Format", 
+                                  f"File format '{file_format}' is not supported for direct opening in PyMOL.\n\n"
+                                  f"You can try using 'Download & Open with System' to open it with "
+                                  f"your system's default application.")
+            return
+            
+        try:
+            self.files_status_label.setText(f"Opening {filename} in PyMOL...")
+            
+            # Download file first
+            file_data = self.api_client.download_file(file_info)
+            
+            if file_data:
+                # Save to temporary file
+                import tempfile
+                
+                temp_dir = tempfile.gettempdir()
+                file_path = os.path.join(temp_dir, filename)
+                
+                with open(file_path, 'wb') as f:
+                    f.write(file_data)
+                
+                log_debug(f"Saved file to: {file_path}")
+                
+                # Open in PyMOL
+                try:
+                    from pymol import cmd
+                    
+                    # Determine how to open based on format
+                    if file_format in map_formats:
+                        # Load as map/density
+                        # Generate a unique object name
+                        map_name = os.path.splitext(filename)[0]
+                        map_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in map_name)
+                        
+                        cmd.load(file_path, map_name)
+                        log_info(f"Loaded map: {map_name}")
+                        
+                        # Optionally apply transformation matrix
+                        if self.apply_transform_checkbox.isChecked() and self.current_transform_matrix:
+                            try:
+                                self._apply_transform_to_object(map_name, self.current_transform_matrix)
+                                self.files_status_label.setText(f"Opened {filename} with transformation matrix applied")
+                            except Exception as matrix_error:
+                                log_error(f"Could not apply transformation matrix: {matrix_error}")
+                                self.files_status_label.setText(f"Opened {filename} (could not apply transformation)")
+                        else:
+                            self.files_status_label.setText(f"Opened {filename} in PyMOL")
+                    else:
+                        # Load as structure
+                        obj_name = os.path.splitext(filename)[0]
+                        obj_name = ''.join(c if c.isalnum() or c == '_' else '_' for c in obj_name)
+                        
+                        cmd.load(file_path, obj_name)
+                        log_info(f"Loaded structure: {obj_name}")
+                        
+                        # Optionally apply transformation matrix
+                        if self.apply_transform_checkbox.isChecked() and self.current_transform_matrix:
+                            try:
+                                self._apply_transform_to_object(obj_name, self.current_transform_matrix)
+                                self.files_status_label.setText(f"Opened {filename} with transformation matrix applied")
+                            except Exception as matrix_error:
+                                log_error(f"Could not apply transformation matrix: {matrix_error}")
+                                self.files_status_label.setText(f"Opened {filename} (could not apply transformation)")
+                        else:
+                            self.files_status_label.setText(f"Opened {filename} in PyMOL")
+                        
+                except ImportError:
+                    log_error("PyMOL cmd module not available")
+                    self.files_status_label.setText("Error: PyMOL not available")
+                    QMessageBox.critical(self, "Error", "PyMOL is not available. Cannot open file.")
+                
+            else:
+                self.files_status_label.setText("Failed to download file")
+                QMessageBox.warning(self, "Error", "Failed to download file for opening")
+                
+        except Exception as e:
+            log_error(f"Error opening file: {e}")
+            self.files_status_label.setText(f"Error opening file: {str(e)}")
+            QMessageBox.critical(self, "Open Error", str(e))
+    
+    def _apply_transform_to_object(self, object_name: str, matrix):
+        """Apply a 4x4 transformation matrix to a PyMOL object"""
+        from pymol import cmd
+        
+        # Convert matrix to flat list if needed
+        if isinstance(matrix, list) and len(matrix) == 4 and isinstance(matrix[0], list):
+            # 4x4 nested array - flatten it
+            flat_matrix = []
+            for row in matrix:
+                flat_matrix.extend(row)
+            matrix = flat_matrix
+        
+        if len(matrix) != 16:
+            raise ValueError(f"Invalid matrix length: {len(matrix)}, expected 16")
+        
+        # PyMOL transform_object expects a flat 16-element list (row-major)
+        cmd.transform_object(object_name, matrix)
+        log_debug(f"Applied transformation matrix to {object_name}")
+
+    def download_and_open_with_system(self):
+        """Download the selected file and open it with the system's default application.
+        
+        This is useful for files that PyMOL cannot open directly (PDFs, images, documents, etc.).
+        Works cross-platform on Windows, macOS, and Linux.
+        """
+        selected_row = self.files_table.currentRow()
+        if selected_row < 0:
+            QMessageBox.warning(self, "Warning", "Please select a file to download")
+            return
+            
+        file_item = self.files_table.item(selected_row, 0)
+        if not file_item:
+            return
+            
+        file_info = file_item.data(Qt.UserRole)
+        filename = file_item.text()
+        
+        try:
+            self.files_status_label.setText(f"Downloading {filename}...")
+            
+            # Download file
+            file_data = self.api_client.download_file(file_info)
+            
+            if file_data:
+                import tempfile
+                import subprocess
+                
+                # Save to a persistent temp location (not just tempfile that gets deleted)
+                # Use a subdirectory to keep things organized
+                temp_dir = os.path.join(tempfile.gettempdir(), '3decision_downloads')
+                os.makedirs(temp_dir, exist_ok=True)
+                file_path = os.path.join(temp_dir, filename)
+                
+                with open(file_path, 'wb') as f:
+                    f.write(file_data)
+                
+                self.files_status_label.setText(f"Opening {filename} with system application...")
+                
+                # Open with system default application - cross-platform
+                self._open_file_with_system(file_path)
+                
+                self.files_status_label.setText(f"Downloaded and opened {filename}")
+                
+            else:
+                self.files_status_label.setText("Failed to download file")
+                QMessageBox.warning(self, "Error", "Failed to download file")
+                
+        except Exception as e:
+            log_error(f"Error downloading file: {e}")
+            self.files_status_label.setText(f"Error: {str(e)}")
+            QMessageBox.critical(self, "Error", f"Failed to download and open file: {str(e)}")
+    
+    def _open_file_with_system(self, file_path: str):
+        """Open a file with the system's default application.
+        
+        Cross-platform implementation for Windows, macOS, and Linux.
+        
+        Args:
+            file_path: The path to the file to open
+        """
+        import subprocess
+        
+        if sys.platform == 'darwin':  # macOS
+            subprocess.run(['open', file_path], check=True)
+        elif sys.platform == 'win32':  # Windows
+            os.startfile(file_path)
+        else:  # Linux and other Unix-like systems
+            subprocess.run(['xdg-open', file_path], check=True)
         
     def is_dark_theme(self):
         """Detect if the current environment uses a dark theme"""

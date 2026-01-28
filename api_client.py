@@ -618,7 +618,11 @@ class ThreeDecisionAPIClient:
             List of project dictionaries with project_label, project_id, count_structures_in_project
             and potentially owner/created_by fields (exact field names may vary by API version)
         """
-        if not self.is_authenticated():
+        if not self.is_configured():
+            raise Exception("API not configured")
+            
+        # Ensure we have a valid connection (will login if needed)
+        if not self.test_connection():
             raise Exception("Not authenticated")
             
         try:
@@ -630,6 +634,21 @@ class ThreeDecisionAPIClient:
             
             log_debug(f"Projects request URL: {url}")
             response = self.session.get(url, headers=headers)
+            
+            # If token expired, try to re-login and retry
+            if response.status_code in [401, 403]:
+                log_debug("Token expired or invalid, attempting re-login...")
+                # Clear the old token so test_connection will try to login again
+                self.token = None
+                if 'Authorization' in self.session.headers:
+                    del self.session.headers['Authorization']
+                
+                if self.login():
+                    log_debug("Re-login successful, retrying projects request")
+                    headers["Authorization"] = f"Bearer {self.token}"
+                    response = self.session.get(url, headers=headers)
+                else:
+                    raise Exception("Authentication failed - please check your API key in Settings")
             
             if response.status_code == 200:
                 projects_data = response.json()
@@ -673,7 +692,11 @@ class ThreeDecisionAPIClient:
         Returns:
             List of structure dictionaries with structure_id, external_code, transformation_matrix
         """
-        if not self.is_authenticated():
+        if not self.is_configured():
+            raise Exception("API not configured")
+            
+        # Ensure we have a valid connection (will login if needed)
+        if not self.test_connection():
             raise Exception("Not authenticated")
             
         try:
@@ -685,6 +708,20 @@ class ThreeDecisionAPIClient:
             
             log_debug(f"Project structures request URL: {url}")
             response = self.session.get(url, headers=headers)
+            
+            # If token expired, try to re-login and retry
+            if response.status_code in [401, 403]:
+                log_debug("Token expired or invalid, attempting re-login...")
+                self.token = None
+                if 'Authorization' in self.session.headers:
+                    del self.session.headers['Authorization']
+                
+                if self.login():
+                    log_debug("Re-login successful, retrying project structures request")
+                    headers["Authorization"] = f"Bearer {self.token}"
+                    response = self.session.get(url, headers=headers)
+                else:
+                    raise Exception("Authentication failed - please check your API key in Settings")
             
             if response.status_code == 200:
                 structures_data = response.json()
@@ -1110,4 +1147,168 @@ class ThreeDecisionAPIClient:
             log_error(f"ZIP download error: {e}")
             import traceback
             log_error(f"Full traceback: {traceback.format_exc()}")
+            return None
+
+    def get_associated_files(self, external_code: str) -> List[Dict[str, Any]]:
+        """Get associated files for a structure by external code"""        
+        try:
+            # Ensure we have a valid connection
+            if not self.test_connection():
+                log_error("Not authenticated for associated files request")
+                return []
+            
+            url = f"{self.base_url}/structures/{external_code}/associated-files"
+            headers = {
+                "Accept": "application/json",
+                "Authorization": f"Bearer {self.token}"
+            }
+            
+            log_debug(f"Getting associated files from: {url}")
+            
+            response = self.session.get(url, headers=headers)
+            log_debug(f"Associated files response status: {response.status_code}")
+            
+            # If token expired, try to re-login and retry
+            if response.status_code in [401, 403]:
+                log_debug("Token expired or invalid, attempting re-login...")
+                self.token = None
+                if 'Authorization' in self.session.headers:
+                    del self.session.headers['Authorization']
+                
+                if self.login():
+                    log_debug("Re-login successful, retrying associated files request")
+                    headers["Authorization"] = f"Bearer {self.token}"
+                    response = self.session.get(url, headers=headers)
+                else:
+                    log_error("Re-login failed for associated files request")
+                    return []
+            
+            if response.status_code == 200:
+                files_data = response.json()
+                log_debug(f"Associated files response: {json.dumps(files_data, indent=2)}")
+                
+                # Handle different response formats
+                if isinstance(files_data, list):
+                    return files_data
+                elif isinstance(files_data, dict):
+                    if 'files' in files_data:
+                        return files_data['files']
+                    elif 'results' in files_data:
+                        return files_data['results']
+                    else:
+                        log_error(f"Unexpected associated files response format: {files_data}")
+                        return []
+                else:
+                    log_error(f"Unexpected associated files response format: {files_data}")
+                    return []
+                    
+            elif response.status_code == 404:
+                # No associated files found - this is normal, not an error
+                log_debug("No associated files found (404)")
+                return []
+            else:
+                log_error(f"Associated files request failed: {response.status_code} - {response.text}")
+                return []
+                
+        except Exception as e:
+            log_error(f"Associated files request error: {e}")
+            return []
+    
+    def download_file_by_id(self, file_id: str) -> Optional[bytes]:
+        """Download file content by ID"""           
+        try:
+            # Ensure we have a valid connection
+            if not self.test_connection():
+                log_error("Not authenticated for file download")
+                return None
+            
+            url = f"{self.base_url}/structures/file/{file_id}/download"
+            headers = {"Authorization": f"Bearer {self.token}"}
+            
+            log_debug(f"Downloading file from: {url}")
+            
+            response = self.session.get(url, headers=headers)
+            log_debug(f"File download response status: {response.status_code}")
+            
+            # If token expired, try to re-login and retry
+            if response.status_code in [401, 403]:
+                log_debug("Token expired or invalid, attempting re-login...")
+                self.token = None
+                if 'Authorization' in self.session.headers:
+                    del self.session.headers['Authorization']
+                
+                if self.login():
+                    log_debug("Re-login successful, retrying file download")
+                    headers["Authorization"] = f"Bearer {self.token}"
+                    response = self.session.get(url, headers=headers)
+                else:
+                    log_error("Re-login failed for file download")
+                    return None
+            
+            if response.status_code == 200:
+                log_debug(f"File downloaded successfully: {len(response.content)} bytes")
+                return response.content
+            else:
+                log_error(f"File download failed: {response.status_code} - {response.text}")
+                return None
+                
+        except Exception as e:
+            log_error(f"File download error: {e}")
+            return None
+            
+    def download_file(self, file_info: Dict[str, Any]) -> Optional[bytes]:
+        """Download file using file info dictionary"""
+        # Extract file ID from different possible fields
+        file_id = file_info.get('id') or file_info.get('file_id') or file_info.get('FILE_ID')
+        
+        if not file_id:
+            # Try to get download URL directly
+            download_url = file_info.get('download_url') or file_info.get('url')
+            if download_url:
+                return self._download_from_url(download_url)
+            else:
+                log_error("No file ID or download URL found in file info")
+                return None
+                
+        return self.download_file_by_id(str(file_id))
+        
+    def _download_from_url(self, url: str) -> Optional[bytes]:
+        """Download file from direct URL"""
+        try:
+            # Ensure we have a valid connection
+            if not self.test_connection():
+                log_error("Not authenticated for URL download")
+                return None
+            
+            log_debug(f"Downloading from direct URL: {url}")
+            headers = {"Authorization": f"Bearer {self.token}"}
+            
+            response = self.session.get(url, headers=headers)
+            
+            # If token expired, try to re-login and retry
+            if response.status_code in [401, 403]:
+                log_debug("Token expired or invalid, attempting re-login...")
+                self.token = None
+                if 'Authorization' in self.session.headers:
+                    del self.session.headers['Authorization']
+                
+                if self.login():
+                    log_debug("Re-login successful, retrying URL download")
+                    headers["Authorization"] = f"Bearer {self.token}"
+                    response = self.session.get(url, headers=headers)
+                else:
+                    log_error("Re-login failed for URL download")
+                    return None
+            
+            if response.status_code == 200:
+                content = response.content
+                log_debug(f"Direct URL download successful: {len(content)} bytes")
+                return content
+            else:
+                log_error(f"Direct URL download failed: {response.status_code}")
+                log_error(f"Response text: {response.text}")
+                return None
+                
+        except Exception as e:
+            log_error(f"Direct URL download error: {e}")
             return None
