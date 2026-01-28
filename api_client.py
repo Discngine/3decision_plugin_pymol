@@ -19,6 +19,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Simple logging state - stored as module-level variable
 _logging_enabled = False
 
+# Private structure naming attribute - stored as module-level variable
+# Options: 'label', 'title', 'external_code'
+_private_structure_naming_attribute = 'label'
+
 def set_logging_enabled(enabled):
     """Enable or disable logging output"""
     global _logging_enabled
@@ -28,6 +32,27 @@ def is_logging_enabled():
     """Check if logging is enabled"""
     global _logging_enabled
     return _logging_enabled
+
+def set_private_structure_naming_attribute(attribute):
+    """Set the attribute to use for naming private structures.
+    
+    Args:
+        attribute: One of 'label', 'title', or 'external_code'
+    """
+    global _private_structure_naming_attribute
+    if attribute in ('label', 'title', 'external_code'):
+        _private_structure_naming_attribute = attribute
+    else:
+        _private_structure_naming_attribute = 'label'  # Default
+
+def get_private_structure_naming_attribute():
+    """Get the attribute used for naming private structures.
+    
+    Returns:
+        One of 'label', 'title', or 'external_code'
+    """
+    global _private_structure_naming_attribute
+    return _private_structure_naming_attribute
 
 def log_debug(message):
     """Log a debug message if logging is enabled"""
@@ -75,6 +100,10 @@ class ThreeDecisionAPIClient:
                     log_enabled = log_enabled_str.lower() == 'true'
                     set_logging_enabled(log_enabled)
                     
+                    # Load private structure naming attribute setting
+                    naming_attr = config['API'].get('private_structure_naming_attribute', 'label')
+                    set_private_structure_naming_attribute(naming_attr)
+                    
                     if self.token:
                         self.session.headers.update({
                             'Authorization': f'Bearer {self.token}',
@@ -92,7 +121,8 @@ class ThreeDecisionAPIClient:
                 'base_url': self.base_url or '',
                 'api_key': self.api_key or '',
                 'token': self.token or '',
-                'logging_enabled': str(is_logging_enabled()).lower()
+                'logging_enabled': str(is_logging_enabled()).lower(),
+                'private_structure_naming_attribute': get_private_structure_naming_attribute()
             }
             
             with open(self.config_file, 'w') as f:
@@ -172,6 +202,11 @@ class ThreeDecisionAPIClient:
     def save_logging_setting(self, enabled: bool):
         """Save logging setting to config file"""
         set_logging_enabled(enabled)
+        self.save_config()
+    
+    def save_naming_attribute_setting(self, attribute: str):
+        """Save private structure naming attribute setting to config file"""
+        set_private_structure_naming_attribute(attribute)
         self.save_config()
             
     def configure(self, base_url: str, api_key: str):
