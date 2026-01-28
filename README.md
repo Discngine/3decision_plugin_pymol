@@ -21,3 +21,16 @@ A plugin to search and load structures from 3decision database into PyMOL.
 
 After installation, access the plugin via:
 - **Menu**: Plugin → 3decision
+
+## Development
+
+### Building the ZIP package
+
+To create a distributable ZIP file for the plugin:
+
+```bash
+cd 3decision_plugin_pymol
+zip -r tmp/3decision_plugin_pymol_test.zip . -x "*.pyc" -x "__pycache__/*" -x "*.git*" -x "tmp/*"
+```
+
+This excludes compiled Python files, cache directories, git files, and temporary files.

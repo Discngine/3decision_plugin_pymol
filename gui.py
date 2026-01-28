@@ -372,7 +372,7 @@ class LoadStructureThread(QThread):
                         from .api_client import get_private_structure_naming_attribute
                         internal_id = None
                         if get_private_structure_naming_attribute() == 'internal_id':
-                            internal_id = self.api_client.get_structure_internal_id(external_code)
+                            internal_id = self.api_client.get_structure_internal_id(structure_id)
                         
                         object_name = get_object_name(external_code, label, source, title, internal_id)
                         
@@ -438,7 +438,7 @@ class LoadStructureThread(QThread):
                         from .api_client import get_private_structure_naming_attribute
                         internal_id = None
                         if get_private_structure_naming_attribute() == 'internal_id':
-                            internal_id = self.api_client.get_structure_internal_id(external_code)
+                            internal_id = self.api_client.get_structure_internal_id(structure_id)
                         
                         # Load into PyMOL using smart object naming
                         object_name = get_object_name(external_code, label, source, title, internal_id)
