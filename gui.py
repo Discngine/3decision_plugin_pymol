@@ -343,15 +343,14 @@ class LoadStructureThread(QThread):
                         })
                 
                 # Get batch PDB with transformations applied
-                pdb_content = self.api_client.export_structures_with_transforms(structures_with_transforms)
+                # Returns a dict mapping filename to PDB content
+                pdb_files_dict = self.api_client.export_structures_with_transforms(structures_with_transforms)
                 
-                if pdb_content:
-                    # Load all structures at once from the combined PDB
-                    # The PDB will have multiple MODEL entries
-                    temp_name = "3decision_batch_temp"
-                    cmd.read_pdbstr(pdb_content, temp_name)
+                if pdb_files_dict:
+                    # Load each structure as a separate object
+                    # Try to match filenames to structure info
+                    loaded_count = 0
                     
-                    # Split into individual objects and rename them
                     for structure_info in self.structure_data:
                         structure_id = structure_info['structure_id']
                         external_code = structure_info['external_code']
@@ -359,32 +358,46 @@ class LoadStructureThread(QThread):
                         source = structure_info.get('source')
                         object_name = get_object_name(external_code, label, source)
                         
-                        # Try to extract and rename each model
-                        # PyMOL loads multi-model PDB files with state numbers
-                        try:
-                            # Get the state/model for this structure
-                            state_num = self.structure_data.index(structure_info) + 1
-                            
-                            # Create new object from the state
-                            cmd.create(object_name, f"{temp_name}", state_num, 1)
-                            
-                            # Attach 3decision metadata
-                            cmd.set_property("3decision_structure_id", structure_id, object_name)
-                            cmd.set_property("3decision_external_code", external_code, object_name)
-                            cmd.set_property("3decision_label", label or '', object_name)
-                            cmd.set_property("3decision_source", source or 'unknown', object_name)
-                            
-                            log_info(f"3decision Plugin: Loaded {object_name} with structure_id: {structure_id} (with transformation)")
-                            self.structure_loaded.emit(structure_id, object_name)
-                        except Exception as e:
-                            log_error(f"Failed to create object {object_name}: {e}")
-                            self.error_occurred.emit(f"Failed to create object {external_code}: {str(e)}")
+                        # Find matching PDB file in the dict
+                        # The API may use different naming conventions (e.g., "3dec_code.pdb" or "code.pdb")
+                        pdb_content = None
+                        for filename, content in pdb_files_dict.items():
+                            # Check if filename contains the external_code
+                            filename_lower = filename.lower()
+                            code_lower = external_code.lower()
+                            if code_lower in filename_lower or filename_lower.replace('3dec_', '').startswith(code_lower):
+                                pdb_content = content
+                                log_debug(f"Matched {external_code} to file {filename}")
+                                break
+                        
+                        if not pdb_content and len(pdb_files_dict) == 1:
+                            # If only one file and one structure, use it
+                            pdb_content = list(pdb_files_dict.values())[0]
+                            log_debug(f"Using single PDB file for {external_code}")
+                        
+                        if pdb_content:
+                            try:
+                                # Load the PDB content as a separate object
+                                cmd.read_pdbstr(pdb_content, object_name)
+                                
+                                # Attach 3decision metadata
+                                cmd.set_property("3decision_structure_id", structure_id, object_name)
+                                cmd.set_property("3decision_external_code", external_code, object_name)
+                                cmd.set_property("3decision_label", label or '', object_name)
+                                cmd.set_property("3decision_source", source or 'unknown', object_name)
+                                
+                                log_info(f"3decision Plugin: Loaded {object_name} with structure_id: {structure_id} (with transformation)")
+                                self.structure_loaded.emit(structure_id, object_name)
+                                loaded_count += 1
+                            except Exception as e:
+                                log_error(f"Failed to load object {object_name}: {e}")
+                                self.error_occurred.emit(f"Failed to load object {external_code}: {str(e)}")
+                        else:
+                            log_error(f"Could not find PDB content for {external_code}")
+                            self.error_occurred.emit(f"Could not find PDB content for {external_code}")
                     
-                    # Delete the temporary combined object
-                    try:
-                        cmd.delete(temp_name)
-                    except:
-                        pass
+                    if loaded_count == 0:
+                        self.error_occurred.emit("Failed to load any structures")
                 else:
                     self.error_occurred.emit("Failed to load structures with transformations")
             else:
@@ -1344,14 +1357,14 @@ class ThreeDecisionDialog(QDialog):
         structure_formats = ['PDB Structure', 'mmCIF Structure', 'SDF Molecule', 
                            'MOL2 Molecule', 'MOL Molecule', 'XYZ Coordinates', 'Maestro File']
         # Map/density formats that PyMOL supports
-        map_formats = ['CCP4 Map', 'MRC Map', 'DSN6 Map', 'XPLOR Map', 'DX Map']
+        map_formats = ['CCP4 Map', 'MRC Map', 'DSN6 Map', 'XPLOR Map', 'DX Map', 'MTZ Reflection']
         
         supported_formats = structure_formats + map_formats
         
         # Formats that PyMOL cannot open but can be opened with system apps
         system_open_formats = ['RDock Grid', 'AS File', 'PDF File', 'PNG Image', 'JPG Image', 
                               'JPEG Image', 'TIF Image', 'TIFF Image', 'DOC File', 'DOCX File',
-                              'XLS File', 'XLSX File', 'CSV File', 'Text File', 'MTZ Reflection']
+                              'XLS File', 'XLSX File', 'CSV File', 'Text File']
         
         if file_format not in supported_formats:
             # Check if it's a format that can be opened with system app
