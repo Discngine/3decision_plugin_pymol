@@ -27,9 +27,17 @@ jobs:
           echo "Created ZIP file:"
           ls -la 3decision_plugin_pymol.zip
 
+      - name: Rename ZIP for release
+        run: |
+          # Get tag name and replace dots with underscores for PyMOL compatibility
+          TAG_NAME="${{ github.ref_name }}"
+          SAFE_TAG="${TAG_NAME//./_}"
+          mv dist/3decision_plugin_pymol.zip "dist/3decision_pymol_plugin_${SAFE_TAG}.zip"
+          echo "Created: 3decision_pymol_plugin_${SAFE_TAG}.zip"
+
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/3decision_plugin_pymol.zip
+          files: dist/3decision_pymol_plugin_*.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
