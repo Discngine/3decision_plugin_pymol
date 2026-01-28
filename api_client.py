@@ -100,6 +100,74 @@ class ThreeDecisionAPIClient:
                 
         except Exception as e:
             log_error(f"Error saving config: {e}")
+    
+    def _request_with_retry(self, method: str, url: str, headers: Dict = None, 
+                            json_data: Dict = None, params: Dict = None,
+                            description: str = "request") -> Optional[requests.Response]:
+        """
+        Make an HTTP request with automatic retry on authentication failure.
+        
+        If the request returns 401/403, attempts to re-login and retry once.
+        
+        Args:
+            method: HTTP method ('GET' or 'POST')
+            url: Full URL to request
+            headers: Optional headers dict (will add Authorization if not present)
+            json_data: Optional JSON payload for POST requests
+            params: Optional query parameters
+            description: Description of the request for logging
+            
+        Returns:
+            Response object or None if both attempts fail
+        """
+        # Ensure headers exist and have Authorization
+        if headers is None:
+            headers = {}
+        if 'Authorization' not in headers and self.token:
+            headers['Authorization'] = f'Bearer {self.token}'
+        
+        # Make initial request
+        log_debug(f"{description} URL: {url}")
+        log_debug(f"Request method: {method}")
+        log_debug(f"Request headers: {headers}")
+        
+        if method.upper() == 'GET':
+            response = self.session.get(url, headers=headers, params=params)
+        elif method.upper() == 'POST':
+            response = self.session.post(url, headers=headers, json=json_data, params=params)
+        else:
+            log_error(f"Unsupported HTTP method: {method}")
+            return None
+            
+        log_debug(f"Response status: {response.status_code}")
+        log_debug(f"Response headers: {dict(response.headers)}")
+        
+        # If authentication failed, try to re-login and retry
+        if response.status_code in [401, 403]:
+            log_debug(f"Authentication failed for {description}, attempting re-login...")
+            
+            # Clear the old token
+            self.token = None
+            if 'Authorization' in self.session.headers:
+                del self.session.headers['Authorization']
+            
+            if self.login():
+                log_debug(f"Re-login successful, retrying {description}")
+                # Update headers with new token
+                headers['Authorization'] = f'Bearer {self.token}'
+                
+                if method.upper() == 'GET':
+                    response = self.session.get(url, headers=headers, params=params)
+                else:
+                    response = self.session.post(url, headers=headers, json=json_data, params=params)
+                    
+                log_debug(f"Retry response status: {response.status_code}")
+                log_debug(f"Retry response headers: {dict(response.headers)}")
+            else:
+                log_error(f"Re-login failed for {description}")
+                return None
+        
+        return response
             
     def save_logging_setting(self, enabled: bool):
         """Save logging setting to config file"""
@@ -204,24 +272,15 @@ class ThreeDecisionAPIClient:
         try:
             # Step 1: Submit search to get job ID
             url = f"{self.base_url}/search/{query}"
-            log_debug(f"Step 1 - Submitting search to: {url}")
-            log_debug(f"Request method: GET")
-            log_debug(f"Request headers: {dict(self.session.headers)}")
             
-            response = self.session.get(url)
-            log_debug(f"Response status: {response.status_code}")
-            log_debug(f"Response headers: {dict(response.headers)}")
+            response = self._request_with_retry(
+                method='GET',
+                url=url,
+                description="Search submission"
+            )
             
-            # If we get 401/403, token might be expired - try to re-login once
-            if response.status_code in [401, 403]:
-                log_debug("Authentication failed, attempting re-login")
-                if self.login():
-                    log_debug(f"Re-login successful, retrying search: {url}")
-                    response = self.session.get(url)
-                    log_debug(f"Retry response status: {response.status_code}")
-                else:
-                    log_error("Re-login failed")
-                    return None
+            if response is None:
+                return None
             
             if response.status_code in [200, 201]:
                 try:
@@ -235,13 +294,15 @@ class ThreeDecisionAPIClient:
                         
                         # Step 2: Poll the queue endpoint to get results
                         queue_url = f"{self.base_url}/queues/basicSearch/jobs/{job_id}"
-                        log_debug(f"Step 2 - Polling queue endpoint: {queue_url}")
-                        log_debug(f"Request method: GET")
-                        log_debug(f"Request headers: {dict(self.session.headers)}")
                         
-                        queue_response = self.session.get(queue_url)
-                        log_debug(f"Queue response status: {queue_response.status_code}")
-                        log_debug(f"Queue response headers: {dict(queue_response.headers)}")
+                        queue_response = self._request_with_retry(
+                            method='GET',
+                            url=queue_url,
+                            description="Queue polling"
+                        )
+                        
+                        if queue_response is None:
+                            return None
                         
                         if queue_response.status_code in [200, 201]:
                             queue_data = queue_response.json()
@@ -317,13 +378,15 @@ class ThreeDecisionAPIClient:
             
         try:
             url = f"{self.base_url}/queues/{queue_name}/jobs/{job_id}"
-            log_debug(f"Getting job status from: {url}")
-            log_debug(f"Request method: GET")
-            log_debug(f"Request headers: {dict(self.session.headers)}")
             
-            response = self.session.get(url)
-            log_debug(f"Response status: {response.status_code}")
-            log_debug(f"Response headers: {dict(response.headers)}")
+            response = self._request_with_retry(
+                method='GET',
+                url=url,
+                description="Job status check"
+            )
+            
+            if response is None:
+                return None
             
             if response.status_code in [200, 201]:
                 data = response.json()
@@ -411,18 +474,22 @@ class ThreeDecisionAPIClient:
                 "variables": variables
             }
             
-            log_debug(f"GraphQL batch request to: {url} (batch size: {len(structure_ids)})")
-            log_debug(f"Request method: POST")
-            log_debug(f"Request headers: {dict(self.session.headers)}")
+            log_debug(f"GraphQL batch request (batch size: {len(structure_ids)})")
             # Only log payload for small batches to avoid console spam
             if len(structure_ids) <= 10:
                 log_debug(f"Request payload: {json.dumps(payload, indent=2)}")
             else:
                 log_debug(f"Request payload: GraphQL query with {len(structure_ids)} structure IDs")
             
-            response = self.session.post(url, json=payload)
-            log_debug(f"Response status: {response.status_code}")
-            log_debug(f"Response headers: {dict(response.headers)}")
+            response = self._request_with_retry(
+                method='POST',
+                url=url,
+                json_data=payload,
+                description="GraphQL structures batch"
+            )
+            
+            if response is None:
+                return []
             
             if response.status_code in [200, 201]:
                 data = response.json()
@@ -471,15 +538,19 @@ class ThreeDecisionAPIClient:
                 "structures_id": [int(structure_id)]
             }
             
-            log_debug(f"Export request to: {url}")
-            log_debug(f"Request method: POST")
-            log_debug(f"Request headers: {dict(self.session.headers)}")
-            log_debug(f"Request params: {params}")
-            log_debug(f"Request payload: {json.dumps(payload, indent=2)}")
+            log_debug(f"Export request params: {params}")
+            log_debug(f"Export request payload: {json.dumps(payload, indent=2)}")
             
-            response = self.session.post(url, json=payload, params=params)
-            log_debug(f"Export response status: {response.status_code}")
-            log_debug(f"Export response headers: {dict(response.headers)}")
+            response = self._request_with_retry(
+                method='POST',
+                url=url,
+                json_data=payload,
+                params=params,
+                description="Structure export"
+            )
+            
+            if response is None:
+                return None
             
             if response.status_code in [200, 201]:
                 # The export endpoint returns a domain event ID as plain text
@@ -497,8 +568,14 @@ class ThreeDecisionAPIClient:
                     while attempt < max_attempts:
                         log_debug(f"Domain events poll attempt {attempt + 1}/{max_attempts}")
                         
-                        domain_response = self.session.get(domain_events_url)
-                        log_debug(f"Domain events response status: {domain_response.status_code}")
+                        domain_response = self._request_with_retry(
+                            method='GET',
+                            url=domain_events_url,
+                            description="Export domain events polling"
+                        )
+                        
+                        if domain_response is None:
+                            return None
                         
                         if domain_response.status_code in [200, 201]:
                             try:
@@ -555,11 +632,14 @@ class ThreeDecisionAPIClient:
                                             # Download the actual PDB file
                                             download_url = f"{self.base_url}/exports/structure/{domain_event_id}?filename={filename_without_ext}&download=true"
                                             
-                                            log_debug(f"Downloading PDB file from: {download_url}")
+                                            download_response = self._request_with_retry(
+                                                method='GET',
+                                                url=download_url,
+                                                description="PDB file download"
+                                            )
                                             
-                                            download_response = self.session.get(download_url)
-                                            log_debug(f"Download response status: {download_response.status_code}")
-                                            log_debug(f"Download response headers: {dict(download_response.headers)}")
+                                            if download_response is None:
+                                                return None
                                             
                                             if download_response.status_code in [200, 201]:
                                                 pdb_content = download_response.text
@@ -628,27 +708,18 @@ class ThreeDecisionAPIClient:
         try:
             url = f"{self.base_url}/projects"
             headers = {
-                "Authorization": f"Bearer {self.token}",
                 "Accept": "application/json"
             }
             
-            log_debug(f"Projects request URL: {url}")
-            response = self.session.get(url, headers=headers)
+            response = self._request_with_retry(
+                method='GET',
+                url=url,
+                headers=headers,
+                description="Projects request"
+            )
             
-            # If token expired, try to re-login and retry
-            if response.status_code in [401, 403]:
-                log_debug("Token expired or invalid, attempting re-login...")
-                # Clear the old token so test_connection will try to login again
-                self.token = None
-                if 'Authorization' in self.session.headers:
-                    del self.session.headers['Authorization']
-                
-                if self.login():
-                    log_debug("Re-login successful, retrying projects request")
-                    headers["Authorization"] = f"Bearer {self.token}"
-                    response = self.session.get(url, headers=headers)
-                else:
-                    raise Exception("Authentication failed - please check your API key in Settings")
+            if response is None:
+                raise Exception("Authentication failed - please check your API key in Settings")
             
             if response.status_code == 200:
                 projects_data = response.json()
@@ -702,26 +773,18 @@ class ThreeDecisionAPIClient:
         try:
             url = f"{self.base_url}/projects/{project_id}/structures/matrix"
             headers = {
-                "Authorization": f"Bearer {self.token}",
                 "Accept": "application/json"
             }
             
-            log_debug(f"Project structures request URL: {url}")
-            response = self.session.get(url, headers=headers)
+            response = self._request_with_retry(
+                method='GET',
+                url=url,
+                headers=headers,
+                description="Project structures request"
+            )
             
-            # If token expired, try to re-login and retry
-            if response.status_code in [401, 403]:
-                log_debug("Token expired or invalid, attempting re-login...")
-                self.token = None
-                if 'Authorization' in self.session.headers:
-                    del self.session.headers['Authorization']
-                
-                if self.login():
-                    log_debug("Re-login successful, retrying project structures request")
-                    headers["Authorization"] = f"Bearer {self.token}"
-                    response = self.session.get(url, headers=headers)
-                else:
-                    raise Exception("Authentication failed - please check your API key in Settings")
+            if response is None:
+                raise Exception("Authentication failed - please check your API key in Settings")
             
             if response.status_code == 200:
                 structures_data = response.json()
@@ -853,12 +916,19 @@ class ThreeDecisionAPIClient:
                     "output_format": "structures-pdb-txt"
                 }
                 
-                log_debug(f"Batch export request URL: {url}")
                 log_debug(f"Batch export payload: {json.dumps(matrix_payload, indent=2)}")
                 log_debug(f"Request params: {params}")
                 
-                response = self.session.post(url, json=matrix_payload, params=params)
-                log_debug(f"Batch export response status: {response.status_code}")
+                response = self._request_with_retry(
+                    method='POST',
+                    url=url,
+                    json_data=matrix_payload,
+                    params=params,
+                    description="Batch export (single structure)"
+                )
+                
+                if response is None:
+                    return None
             
             if response.status_code in [200, 201]:
                 # The export endpoint returns a domain event ID as plain text
@@ -876,8 +946,14 @@ class ThreeDecisionAPIClient:
                     while attempt < max_attempts:
                         log_debug(f"Domain events poll attempt {attempt + 1}/{max_attempts}")
                         
-                        domain_response = self.session.get(domain_events_url)
-                        log_debug(f"Domain events response status: {domain_response.status_code}")
+                        domain_response = self._request_with_retry(
+                            method='GET',
+                            url=domain_events_url,
+                            description="Batch export domain events polling"
+                        )
+                        
+                        if domain_response is None:
+                            return None
                         
                         if domain_response.status_code in [200, 201]:
                             try:
@@ -922,10 +998,15 @@ class ThreeDecisionAPIClient:
                                         
                                         # Download the actual PDB file
                                         download_url = f"{self.base_url}/exports/structure/{domain_event_id}?filename={filename_without_ext}&download=true"
-                                        log_debug(f"Downloading PDB file from: {download_url}")
                                         
-                                        download_response = self.session.get(download_url)
-                                        log_debug(f"Download response status: {download_response.status_code}")
+                                        download_response = self._request_with_retry(
+                                            method='GET',
+                                            url=download_url,
+                                            description="Batch export PDB download"
+                                        )
+                                        
+                                        if download_response is None:
+                                            return None
                                         
                                         if download_response.status_code == 200:
                                             pdb_content = download_response.text
@@ -1003,7 +1084,6 @@ class ThreeDecisionAPIClient:
                 "output_format": "structures-pdb-zip"
             }
             
-            log_debug(f"Submitting export request to: {url}")
             log_debug(f"Structure IDs: {structure_ids}")
             if matrices:
                 log_debug(f"With {len(matrices)} transformation matrices")
@@ -1011,9 +1091,17 @@ class ThreeDecisionAPIClient:
                 log_debug("No transformation matrices provided")
             log_debug(f"Using output format: structures-pdb-zip")
             
-            response = self.session.post(url, headers=headers, json=payload, params=params)
-            log_debug(f"Export response status: {response.status_code}")
-            log_debug(f"Export response headers: {dict(response.headers)}")
+            response = self._request_with_retry(
+                method='POST',
+                url=url,
+                headers=headers,
+                json_data=payload,
+                params=params,
+                description="ZIP export request"
+            )
+            
+            if response is None:
+                return None
             
             if response.status_code in [200, 201]:
                 # The export endpoint returns a domain event ID as plain text
@@ -1031,8 +1119,14 @@ class ThreeDecisionAPIClient:
                     while attempt < max_attempts:
                         log_debug(f"Domain events poll attempt {attempt + 1}/{max_attempts}")
                         
-                        domain_response = self.session.get(domain_events_url)
-                        log_debug(f"Domain events response status: {domain_response.status_code}")
+                        domain_response = self._request_with_retry(
+                            method='GET',
+                            url=domain_events_url,
+                            description="ZIP export domain events polling"
+                        )
+                        
+                        if domain_response is None:
+                            return None
                         
                         if domain_response.status_code in [200, 201]:
                             try:
@@ -1088,11 +1182,14 @@ class ThreeDecisionAPIClient:
                                             # Step 3: Download the actual ZIP file
                                             download_url = f"{self.base_url}/exports/structure/{domain_event_id}?filename={filename_without_ext}&download=true"
                                             
-                                            log_debug(f"Downloading ZIP file from: {download_url}")
+                                            download_response = self._request_with_retry(
+                                                method='GET',
+                                                url=download_url,
+                                                description="ZIP file download"
+                                            )
                                             
-                                            download_response = self.session.get(download_url)
-                                            log_debug(f"Download response status: {download_response.status_code}")
-                                            log_debug(f"Download response headers: {dict(download_response.headers)}")
+                                            if download_response is None:
+                                                return None
                                             
                                             if download_response.status_code in [200, 201]:
                                                 zip_content = download_response.content
@@ -1159,29 +1256,18 @@ class ThreeDecisionAPIClient:
             
             url = f"{self.base_url}/structures/{external_code}/associated-files"
             headers = {
-                "Accept": "application/json",
-                "Authorization": f"Bearer {self.token}"
+                "Accept": "application/json"
             }
             
-            log_debug(f"Getting associated files from: {url}")
+            response = self._request_with_retry(
+                method='GET',
+                url=url,
+                headers=headers,
+                description="Associated files request"
+            )
             
-            response = self.session.get(url, headers=headers)
-            log_debug(f"Associated files response status: {response.status_code}")
-            
-            # If token expired, try to re-login and retry
-            if response.status_code in [401, 403]:
-                log_debug("Token expired or invalid, attempting re-login...")
-                self.token = None
-                if 'Authorization' in self.session.headers:
-                    del self.session.headers['Authorization']
-                
-                if self.login():
-                    log_debug("Re-login successful, retrying associated files request")
-                    headers["Authorization"] = f"Bearer {self.token}"
-                    response = self.session.get(url, headers=headers)
-                else:
-                    log_error("Re-login failed for associated files request")
-                    return []
+            if response is None:
+                return []
             
             if response.status_code == 200:
                 files_data = response.json()
@@ -1223,27 +1309,15 @@ class ThreeDecisionAPIClient:
                 return None
             
             url = f"{self.base_url}/structures/file/{file_id}/download"
-            headers = {"Authorization": f"Bearer {self.token}"}
             
-            log_debug(f"Downloading file from: {url}")
+            response = self._request_with_retry(
+                method='GET',
+                url=url,
+                description="File download"
+            )
             
-            response = self.session.get(url, headers=headers)
-            log_debug(f"File download response status: {response.status_code}")
-            
-            # If token expired, try to re-login and retry
-            if response.status_code in [401, 403]:
-                log_debug("Token expired or invalid, attempting re-login...")
-                self.token = None
-                if 'Authorization' in self.session.headers:
-                    del self.session.headers['Authorization']
-                
-                if self.login():
-                    log_debug("Re-login successful, retrying file download")
-                    headers["Authorization"] = f"Bearer {self.token}"
-                    response = self.session.get(url, headers=headers)
-                else:
-                    log_error("Re-login failed for file download")
-                    return None
+            if response is None:
+                return None
             
             if response.status_code == 200:
                 log_debug(f"File downloaded successfully: {len(response.content)} bytes")
@@ -1280,25 +1354,14 @@ class ThreeDecisionAPIClient:
                 log_error("Not authenticated for URL download")
                 return None
             
-            log_debug(f"Downloading from direct URL: {url}")
-            headers = {"Authorization": f"Bearer {self.token}"}
+            response = self._request_with_retry(
+                method='GET',
+                url=url,
+                description="Direct URL download"
+            )
             
-            response = self.session.get(url, headers=headers)
-            
-            # If token expired, try to re-login and retry
-            if response.status_code in [401, 403]:
-                log_debug("Token expired or invalid, attempting re-login...")
-                self.token = None
-                if 'Authorization' in self.session.headers:
-                    del self.session.headers['Authorization']
-                
-                if self.login():
-                    log_debug("Re-login successful, retrying URL download")
-                    headers["Authorization"] = f"Bearer {self.token}"
-                    response = self.session.get(url, headers=headers)
-                else:
-                    log_error("Re-login failed for URL download")
-                    return None
+            if response is None:
+                return None
             
             if response.status_code == 200:
                 content = response.content
