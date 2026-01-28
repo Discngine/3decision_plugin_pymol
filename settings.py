@@ -158,10 +158,11 @@ class SettingsDialog(QDialog):
         
         # Private structure naming attribute dropdown
         self.naming_attribute_combo = QComboBox()
-        self.naming_attribute_combo.addItems(["label", "title", "external_code"])
+        self.naming_attribute_combo.addItems(["label", "title", "external_code", "internal_id"])
         self.naming_attribute_combo.setToolTip(
             "Choose which attribute to use for naming private structures when loaded into PyMOL.\n"
-            "Public structures (PDB, AlphaFold, etc.) always use external_code."
+            "Public structures (PDB, AlphaFold, etc.) always use external_code.\n"
+            "Note: internal_id requires an additional API call per structure."
         )
         form_layout.addRow("Private structure name:", self.naming_attribute_combo)
         

@@ -20,7 +20,7 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 _logging_enabled = False
 
 # Private structure naming attribute - stored as module-level variable
-# Options: 'label', 'title', 'external_code'
+# Options: 'label', 'title', 'external_code', 'internal_id'
 _private_structure_naming_attribute = 'label'
 
 def set_logging_enabled(enabled):
@@ -37,10 +37,10 @@ def set_private_structure_naming_attribute(attribute):
     """Set the attribute to use for naming private structures.
     
     Args:
-        attribute: One of 'label', 'title', or 'external_code'
+        attribute: One of 'label', 'title', 'external_code', or 'internal_id'
     """
     global _private_structure_naming_attribute
-    if attribute in ('label', 'title', 'external_code'):
+    if attribute in ('label', 'title', 'external_code', 'internal_id'):
         _private_structure_naming_attribute = attribute
     else:
         _private_structure_naming_attribute = 'label'  # Default
@@ -49,7 +49,7 @@ def get_private_structure_naming_attribute():
     """Get the attribute used for naming private structures.
     
     Returns:
-        One of 'label', 'title', or 'external_code'
+        One of 'label', 'title', 'external_code', or 'internal_id'
     """
     global _private_structure_naming_attribute
     return _private_structure_naming_attribute
@@ -558,6 +558,80 @@ class ThreeDecisionAPIClient:
         except Exception as e:
             log_error(f"Batch fetch error: {e}")
             return []
+    
+    def get_structure_internal_id(self, external_code: str) -> Optional[str]:
+        """
+        Fetch the internal_id annotation for a structure.
+        
+        The internal_id is stored as a structure annotation with ANNOT_TYPE_LABEL = "Internal ID".
+        This method calls the structure info endpoint and extracts the internal_id from annotations.
+        
+        Args:
+            external_code: The 3decision external code of the structure
+            
+        Returns:
+            The internal_id value if found, None otherwise
+        """
+        if not self.test_connection():
+            return None
+            
+        try:
+            # Call the structure info endpoint with annotations option
+            url = f"{self.base_url}/structures/{external_code}/info"
+            
+            # Request body to get annotations
+            payload = {
+                "base": {"default": False},
+                "annotations": {"default": True},
+                "parameters": {"default": False},
+                "relations": {"default": False},
+                "chains": {"default": False},
+                "pockets": {"default": False},
+                "ligands": {"default": False},
+                "projects": {"default": False},
+                "biomolecules": {"default": False}
+            }
+            
+            log_debug(f"Fetching internal_id for structure: {external_code}")
+            
+            response = self._request_with_retry(
+                method='POST',
+                url=url,
+                json_data=payload,
+                description=f"Structure info annotations for {external_code}"
+            )
+            
+            if response is None:
+                return None
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                log_debug(f"Structure info response for {external_code}: {json.dumps(data, indent=2)[:500]}...")
+                
+                # Extract annotations from response
+                annotation_info = data.get('ANNOTATION_INFO', {})
+                structure_annots = annotation_info.get('StructureAnnot', [])
+                
+                # Find the "Internal ID" annotation
+                for annot in structure_annots:
+                    if annot.get('ANNOT_TYPE_LABEL', '').lower() == 'internal id':
+                        internal_id = annot.get('ANNOT_VALUE')
+                        if internal_id:
+                            log_debug(f"Found internal_id for {external_code}: {internal_id}")
+                            return internal_id
+                
+                log_debug(f"No internal_id annotation found for structure {external_code}")
+                return None
+            else:
+                log_error(f"Structure info request failed: {response.status_code}")
+                log_error(f"Response text: {response.text}")
+                return None
+                
+        except Exception as e:
+            log_error(f"Get internal_id error: {e}")
+            import traceback
+            log_error(f"Full traceback: {traceback.format_exc()}")
+            return None
             
     def export_structure_pdb(self, structure_id: str) -> Optional[str]:
         """Export structure in PDB format"""

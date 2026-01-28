@@ -213,14 +213,14 @@ class SearchThread(QThread):
             self.error_occurred.emit(f"Search error: {str(e)}")
 
 
-def get_object_name(external_code: str, label: str = None, source: str = None, title: str = None) -> str:
+def get_object_name(external_code: str, label: str = None, source: str = None, title: str = None, internal_id: str = None) -> str:
     """
     Determine the best object name for a structure in PyMOL.
     
     Naming logic:
     - For public domain structures (RCSB PDB, PDB, AlphaFold, etc.): use external_code (e.g., '1abo')
     - For private/internal structures: use the attribute configured in settings 
-      (label, title, or external_code)
+      (label, title, external_code, or internal_id)
     - Fallback: use external_code
     
     The name is sanitized to be valid for PyMOL (no spaces, special chars replaced).
@@ -251,6 +251,8 @@ def get_object_name(external_code: str, label: str = None, source: str = None, t
             name = label.strip()
         elif naming_attr == 'title' and title and title.strip() and title.lower() not in ['n/a', 'null', 'none', '']:
             name = title.strip()
+        elif naming_attr == 'internal_id' and internal_id and internal_id.strip() and internal_id.lower() not in ['n/a', 'null', 'none', '']:
+            name = internal_id.strip()
         else:
             # Fallback to external_code
             name = external_code
@@ -365,7 +367,14 @@ class LoadStructureThread(QThread):
                         label = structure_info.get('label')
                         source = structure_info.get('source')
                         title = structure_info.get('title')
-                        object_name = get_object_name(external_code, label, source, title)
+                        
+                        # Fetch internal_id if the naming attribute is set to 'internal_id'
+                        from .api_client import get_private_structure_naming_attribute
+                        internal_id = None
+                        if get_private_structure_naming_attribute() == 'internal_id':
+                            internal_id = self.api_client.get_structure_internal_id(external_code)
+                        
+                        object_name = get_object_name(external_code, label, source, title, internal_id)
                         
                         # Find matching PDB file in the dict
                         # The API may use different naming conventions (e.g., "3dec_code.pdb" or "code.pdb")
@@ -425,8 +434,14 @@ class LoadStructureThread(QThread):
                     pdb_content = self.api_client.export_structure_pdb(structure_id)
                     
                     if pdb_content:
+                        # Fetch internal_id if the naming attribute is set to 'internal_id'
+                        from .api_client import get_private_structure_naming_attribute
+                        internal_id = None
+                        if get_private_structure_naming_attribute() == 'internal_id':
+                            internal_id = self.api_client.get_structure_internal_id(external_code)
+                        
                         # Load into PyMOL using smart object naming
-                        object_name = get_object_name(external_code, label, source, title)
+                        object_name = get_object_name(external_code, label, source, title, internal_id)
                         cmd.read_pdbstr(pdb_content, object_name)
                         
                         # Attach 3decision metadata as object properties
