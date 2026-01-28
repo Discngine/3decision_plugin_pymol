@@ -810,7 +810,7 @@ class ThreeDecisionAPIClient:
             log_error(f"Full traceback: {traceback.format_exc()}")
             raise
     
-    def export_structures_with_transforms(self, structures_with_transforms: List[Dict]) -> Optional[str]:
+    def export_structures_with_transforms(self, structures_with_transforms: List[Dict]) -> Optional[Dict[str, str]]:
         """
         Export multiple structures with transformation matrices using batch export
         
@@ -818,7 +818,7 @@ class ThreeDecisionAPIClient:
             structures_with_transforms: List of dicts with structure_id, external_code, and transform matrix
             
         Returns:
-            PDB content as string (combined multi-MODEL for multiple structures), or None if failed
+            Dict mapping filename to PDB content for each structure, or None if failed
         """
         if not self.test_connection():
             return None
@@ -848,12 +848,11 @@ class ThreeDecisionAPIClient:
                     log_error("Failed to download structures as ZIP")
                     return None
                 
-                # Extract PDB files from ZIP and combine them into multi-MODEL format
+                # Extract PDB files from ZIP and return as dict mapping filename to content
                 import zipfile
                 import io
                 
-                combined_pdb = ""
-                model_num = 1
+                pdb_files_dict = {}
                 
                 try:
                     with zipfile.ZipFile(io.BytesIO(zip_content), 'r') as zip_ref:
@@ -869,18 +868,13 @@ class ThreeDecisionAPIClient:
                         for pdb_filename in pdb_files:
                             log_debug(f"Extracting {pdb_filename} from ZIP")
                             pdb_content = zip_ref.read(pdb_filename).decode('utf-8')
-                            
-                            # Add MODEL/ENDMDL headers for multi-model format
-                            combined_pdb += f"MODEL     {model_num}\n"
-                            combined_pdb += pdb_content
-                            if not pdb_content.endswith('\n'):
-                                combined_pdb += '\n'
-                            combined_pdb += "ENDMDL\n"
-                            model_num += 1
+                            # Store with the filename (without path)
+                            base_filename = pdb_filename.split('/')[-1]
+                            pdb_files_dict[base_filename] = pdb_content
                         
-                        if combined_pdb:
-                            log_debug(f"Successfully combined {model_num - 1} structures into multi-MODEL PDB")
-                            return combined_pdb
+                        if pdb_files_dict:
+                            log_debug(f"Successfully extracted {len(pdb_files_dict)} structures from ZIP")
+                            return pdb_files_dict
                         else:
                             log_error("No PDB files were extracted from ZIP")
                             return None
@@ -1011,7 +1005,9 @@ class ThreeDecisionAPIClient:
                                         if download_response.status_code == 200:
                                             pdb_content = download_response.text
                                             log_debug(f"Successfully downloaded PDB content: {len(pdb_content)} bytes")
-                                            return pdb_content
+                                            # Return as dict for consistency with multi-structure case
+                                            external_code = structures_with_transforms[0]["external_code"]
+                                            return {f"{external_code}.pdb": pdb_content}
                                         else:
                                             log_error(f"Failed to download PDB: {download_response.status_code}")
                                             log_error(f"Response: {download_response.text}")
