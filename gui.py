@@ -213,17 +213,20 @@ class SearchThread(QThread):
             self.error_occurred.emit(f"Search error: {str(e)}")
 
 
-def get_object_name(external_code: str, label: str = None, source: str = None) -> str:
+def get_object_name(external_code: str, label: str = None, source: str = None, title: str = None, internal_id: str = None) -> str:
     """
     Determine the best object name for a structure in PyMOL.
     
     Naming logic:
     - For public domain structures (RCSB PDB, PDB, AlphaFold, etc.): use external_code (e.g., '1abo')
-    - For private/internal structures with a label: use the label
+    - For private/internal structures: use the attribute configured in settings 
+      (label, title, external_code, or internal_id)
     - Fallback: use external_code
     
     The name is sanitized to be valid for PyMOL (no spaces, special chars replaced).
     """
+    from .api_client import get_private_structure_naming_attribute
+    
     # Define public/known sources where external_code is meaningful
     public_sources = [
         'rcsb', 'pdb', 'alphafold', 'uniprot', 'chembl', 'drugbank',
@@ -240,12 +243,19 @@ def get_object_name(external_code: str, label: str = None, source: str = None) -
     if is_public:
         # Use external_code for public structures (it's the PDB code, etc.)
         name = external_code
-    elif label and label.strip() and label.lower() not in ['n/a', 'null', 'none', '']:
-        # Use label for private structures if available
-        name = label.strip()
     else:
-        # Fallback to external_code
-        name = external_code
+        # For private structures, use the configured naming attribute
+        naming_attr = get_private_structure_naming_attribute()
+        
+        if naming_attr == 'label' and label and label.strip() and label.lower() not in ['n/a', 'null', 'none', '']:
+            name = label.strip()
+        elif naming_attr == 'title' and title and title.strip() and title.lower() not in ['n/a', 'null', 'none', '']:
+            name = title.strip()
+        elif naming_attr == 'internal_id' and internal_id and internal_id.strip() and internal_id.lower() not in ['n/a', 'null', 'none', '']:
+            name = internal_id.strip()
+        else:
+            # Fallback to external_code
+            name = external_code
     
     # Strip '3dec_' prefix if present (from API file naming)
     if name.lower().startswith('3dec_'):
@@ -272,7 +282,7 @@ class LoadStructureThread(QThread):
     def __init__(self, api_client: ThreeDecisionAPIClient, structure_data: List[Dict[str, str]]):
         super().__init__()
         self.api_client = api_client
-        self.structure_data = structure_data  # List of {structure_id, external_code, label?, source?, matrix?}
+        self.structure_data = structure_data  # List of {structure_id, external_code, label?, title?, source?, matrix?}
         
     def run(self):
         try:
@@ -356,7 +366,15 @@ class LoadStructureThread(QThread):
                         external_code = structure_info['external_code']
                         label = structure_info.get('label')
                         source = structure_info.get('source')
-                        object_name = get_object_name(external_code, label, source)
+                        title = structure_info.get('title')
+                        
+                        # Fetch internal_id if the naming attribute is set to 'internal_id'
+                        from .api_client import get_private_structure_naming_attribute
+                        internal_id = None
+                        if get_private_structure_naming_attribute() == 'internal_id':
+                            internal_id = self.api_client.get_structure_internal_id(structure_id)
+                        
+                        object_name = get_object_name(external_code, label, source, title, internal_id)
                         
                         # Find matching PDB file in the dict
                         # The API may use different naming conventions (e.g., "3dec_code.pdb" or "code.pdb")
@@ -408,6 +426,7 @@ class LoadStructureThread(QThread):
                     external_code = structure_info['external_code']
                     label = structure_info.get('label')
                     source = structure_info.get('source')
+                    title = structure_info.get('title')
                     
                     self.status_update.emit(f"Loading structure {external_code} ({structure_id})...")
                     
@@ -415,8 +434,14 @@ class LoadStructureThread(QThread):
                     pdb_content = self.api_client.export_structure_pdb(structure_id)
                     
                     if pdb_content:
+                        # Fetch internal_id if the naming attribute is set to 'internal_id'
+                        from .api_client import get_private_structure_naming_attribute
+                        internal_id = None
+                        if get_private_structure_naming_attribute() == 'internal_id':
+                            internal_id = self.api_client.get_structure_internal_id(structure_id)
+                        
                         # Load into PyMOL using smart object naming
-                        object_name = get_object_name(external_code, label, source)
+                        object_name = get_object_name(external_code, label, source, title, internal_id)
                         cmd.read_pdbstr(pdb_content, object_name)
                         
                         # Attach 3decision metadata as object properties
@@ -1142,6 +1167,10 @@ class ThreeDecisionDialog(QDialog):
                 label_item = self.project_structures_table.item(row, 1)
                 label = label_item.text() if label_item else None
                 
+                # Get title from table column 2
+                title_item = self.project_structures_table.item(row, 2)
+                title = title_item.text() if title_item else None
+                
                 # Data is now a dict with structure_id, matrix, and source
                 if isinstance(data, dict):
                     structure_id = data.get('structure_id')
@@ -1160,6 +1189,7 @@ class ThreeDecisionDialog(QDialog):
                         'structure_id': str(structure_id),
                         'external_code': external_code,
                         'label': label,
+                        'title': title,
                         'source': source,
                         'matrix': matrix  # Include transformation matrix
                     })
@@ -2180,10 +2210,12 @@ class ThreeDecisionDialog(QDialog):
                 structure_id = item.data(Qt.UserRole)
                 external_code = item.text()
                 
-                # Get label and source from table columns
+                # Get label, title and source from table columns
                 label_item = self.results_table.item(row, 1)
+                title_item = self.results_table.item(row, 2)
                 source_item = self.results_table.item(row, 5)
                 label = label_item.text() if label_item else None
+                title = title_item.text() if title_item else None
                 source = source_item.text() if source_item else None
                 
                 log_debug(f"Row {row}: structure_id={structure_id}, external_code={external_code}, label={label}, source={source}")
@@ -2193,6 +2225,7 @@ class ThreeDecisionDialog(QDialog):
                         'structure_id': str(structure_id),
                         'external_code': external_code,
                         'label': label,
+                        'title': title,
                         'source': source
                     })
                 else:

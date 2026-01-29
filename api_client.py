@@ -19,6 +19,10 @@ urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 # Simple logging state - stored as module-level variable
 _logging_enabled = False
 
+# Private structure naming attribute - stored as module-level variable
+# Options: 'label', 'title', 'external_code', 'internal_id'
+_private_structure_naming_attribute = 'label'
+
 def set_logging_enabled(enabled):
     """Enable or disable logging output"""
     global _logging_enabled
@@ -28,6 +32,27 @@ def is_logging_enabled():
     """Check if logging is enabled"""
     global _logging_enabled
     return _logging_enabled
+
+def set_private_structure_naming_attribute(attribute):
+    """Set the attribute to use for naming private structures.
+    
+    Args:
+        attribute: One of 'label', 'title', 'external_code', or 'internal_id'
+    """
+    global _private_structure_naming_attribute
+    if attribute in ('label', 'title', 'external_code', 'internal_id'):
+        _private_structure_naming_attribute = attribute
+    else:
+        _private_structure_naming_attribute = 'label'  # Default
+
+def get_private_structure_naming_attribute():
+    """Get the attribute used for naming private structures.
+    
+    Returns:
+        One of 'label', 'title', 'external_code', or 'internal_id'
+    """
+    global _private_structure_naming_attribute
+    return _private_structure_naming_attribute
 
 def log_debug(message):
     """Log a debug message if logging is enabled"""
@@ -75,6 +100,10 @@ class ThreeDecisionAPIClient:
                     log_enabled = log_enabled_str.lower() == 'true'
                     set_logging_enabled(log_enabled)
                     
+                    # Load private structure naming attribute setting
+                    naming_attr = config['API'].get('private_structure_naming_attribute', 'label')
+                    set_private_structure_naming_attribute(naming_attr)
+                    
                     if self.token:
                         self.session.headers.update({
                             'Authorization': f'Bearer {self.token}',
@@ -92,7 +121,8 @@ class ThreeDecisionAPIClient:
                 'base_url': self.base_url or '',
                 'api_key': self.api_key or '',
                 'token': self.token or '',
-                'logging_enabled': str(is_logging_enabled()).lower()
+                'logging_enabled': str(is_logging_enabled()).lower(),
+                'private_structure_naming_attribute': get_private_structure_naming_attribute()
             }
             
             with open(self.config_file, 'w') as f:
@@ -172,6 +202,11 @@ class ThreeDecisionAPIClient:
     def save_logging_setting(self, enabled: bool):
         """Save logging setting to config file"""
         set_logging_enabled(enabled)
+        self.save_config()
+    
+    def save_naming_attribute_setting(self, attribute: str):
+        """Save private structure naming attribute setting to config file"""
+        set_private_structure_naming_attribute(attribute)
         self.save_config()
             
     def configure(self, base_url: str, api_key: str):
@@ -523,6 +558,76 @@ class ThreeDecisionAPIClient:
         except Exception as e:
             log_error(f"Batch fetch error: {e}")
             return []
+    
+    def get_structure_internal_id(self, structure_id: int) -> Optional[str]:
+        """
+        Fetch the internal_id annotation for a structure.
+        
+        The internal_id is stored as a structure annotation with ANNOT_TYPE_LABEL = "Internal ID".
+        This method calls the GET /structures/info/annotation endpoint and extracts the internal_id.
+        
+        Args:
+            structure_id: The 3decision internal structure ID (numeric)
+            
+        Returns:
+            The internal_id value if found, None otherwise
+        """
+        if not self.test_connection():
+            return None
+            
+        try:
+            # Use GET /structures/info/annotation with structure_id as query parameter
+            url = f"{self.base_url}/structures/info/annotation"
+            params = {
+                "structure_id": [int(structure_id)]
+            }
+            headers = {
+                'X-API-VERSION': '1'
+            }
+            
+            log_debug(f"Fetching internal_id for structure_id: {structure_id}")
+            
+            response = self._request_with_retry(
+                method='GET',
+                url=url,
+                headers=headers,
+                params=params,
+                description=f"Structure annotations for structure_id {structure_id}"
+            )
+            
+            if response is None:
+                return None
+            
+            if response.status_code in [200, 201]:
+                data = response.json()
+                log_debug(f"Structure annotations response for {structure_id}: {json.dumps(data, indent=2)[:500]}...")
+                
+                # Response is an array of structures with annotations
+                if isinstance(data, list) and len(data) > 0:
+                    structure_data = data[0]
+                    annotation_info = structure_data.get('ANNOTATION_INFO', {})
+                    structure_annots = annotation_info.get('StructureAnnot', [])
+                    
+                    # Find the "Internal ID" annotation
+                    for annot in structure_annots:
+                        if annot.get('ANNOT_TYPE_LABEL', '').lower() == 'internal id':
+                            internal_id = annot.get('ANNOT_VALUE')
+                            if internal_id:
+                                log_debug(f"Found internal_id for structure_id {structure_id}: {internal_id}")
+                                return internal_id
+                
+                log_debug(f"No internal_id annotation found for structure_id {structure_id}")
+                return None
+            else:
+                log_error(f"Structure annotations request failed: {response.status_code}")
+                log_error(f"Response text: {response.text}")
+                return None
+                
+        except Exception as e:
+            log_error(f"Get internal_id error: {e}")
+            import traceback
+            log_error(f"Full traceback: {traceback.format_exc()}")
+            return None
             
     def export_structure_pdb(self, structure_id: str) -> Optional[str]:
         """Export structure in PDB format"""

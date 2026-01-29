@@ -14,7 +14,7 @@ try:
     from pymol.Qt import QtWidgets, QtCore, QtGui
     from pymol.Qt.QtWidgets import (
         QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, 
-        QLabel, QMessageBox, QFormLayout, QDialogButtonBox, QFrame, QCheckBox
+        QLabel, QMessageBox, QFormLayout, QDialogButtonBox, QFrame, QCheckBox, QComboBox
     )
     from pymol.Qt.QtCore import Qt, QThread, pyqtSignal
     from pymol.Qt.QtGui import QPixmap
@@ -23,7 +23,7 @@ except ImportError:
     from PyQt5 import QtWidgets, QtCore, QtGui
     from PyQt5.QtWidgets import (
         QDialog, QVBoxLayout, QHBoxLayout, QLineEdit, QPushButton, 
-        QLabel, QMessageBox, QFormLayout, QDialogButtonBox, QFrame, QCheckBox
+        QLabel, QMessageBox, QFormLayout, QDialogButtonBox, QFrame, QCheckBox, QComboBox
     )
     from PyQt5.QtCore import Qt, QThread, pyqtSignal
     from PyQt5.QtGui import QPixmap
@@ -156,6 +156,15 @@ class SettingsDialog(QDialog):
         self.log_events_checkbox.setToolTip("Enable logging of plugin events to console")
         form_layout.addRow("", self.log_events_checkbox)
         
+        # Private structure naming attribute dropdown
+        self.naming_attribute_combo = QComboBox()
+        self.naming_attribute_combo.addItems(["label", "title", "external_code", "internal_id"])
+        self.naming_attribute_combo.setToolTip(
+            "Choose which attribute to use for naming private structures when loaded into PyMOL.\n"
+            "Public structures (PDB, AlphaFold, etc.) always use external_code."
+        )
+        form_layout.addRow("Private structure name:", self.naming_attribute_combo)
+        
         form_main_layout.addLayout(form_layout)
         
         # Test connection and help button layout
@@ -287,8 +296,14 @@ class SettingsDialog(QDialog):
             self.api_key_input.setText(self.api_client.api_key)
             
         # Load logging setting
-        from .api_client import is_logging_enabled
+        from .api_client import is_logging_enabled, get_private_structure_naming_attribute
         self.log_events_checkbox.setChecked(is_logging_enabled())
+        
+        # Load private structure naming attribute setting
+        naming_attr = get_private_structure_naming_attribute()
+        index = self.naming_attribute_combo.findText(naming_attr)
+        if index >= 0:
+            self.naming_attribute_combo.setCurrentIndex(index)
             
     def test_connection(self):
         """Test the API connection"""
@@ -342,9 +357,14 @@ class SettingsDialog(QDialog):
         
         # Save logging setting
         log_enabled = self.log_events_checkbox.isChecked()
-        from .api_client import set_logging_enabled
+        from .api_client import set_logging_enabled, set_private_structure_naming_attribute
         set_logging_enabled(log_enabled)
         self.api_client.save_logging_setting(log_enabled)
+        
+        # Save private structure naming attribute setting
+        naming_attr = self.naming_attribute_combo.currentText()
+        set_private_structure_naming_attribute(naming_attr)
+        self.api_client.save_naming_attribute_setting(naming_attr)
         
         # Try to login
         if self.api_client.login():
